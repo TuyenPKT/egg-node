@@ -6,41 +6,38 @@ use crate::chain::genesis_block;
 use crate::chain::state::ChainState;
 
 #[derive(Parser)]
+#[command(author, version, about)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
-
-    /// Bind address, ví dụ: 0.0.0.0:8333
-    #[arg(long)]
-    pub bind: Option<String>,
-
-    /// Peer address, ví dụ: 180.93.1.235:8333
-    #[arg(long)]
-    pub peer: Vec<String>,
 }
 
 #[derive(Subcommand)]
 pub enum Commands {
     Init,
-    Run,
+
+    Run {
+        /// Bind address, ví dụ: 0.0.0.0:8333
+        #[arg(long, default_value = "0.0.0.0:8333")]
+        bind: String,
+
+        /// Peer address, ví dụ: 180.93.1.235:8333
+        #[arg(long)]
+        peer: Vec<String>,
+    },
 }
 
 impl Cli {
     pub fn execute(&self) {
-        match self.command {
+        match &self.command {
             Commands::Init => {
                 println!("Init node (genesis only)");
             }
-            Commands::Run => {
+
+            Commands::Run { bind, peer } => {
                 let mut config = NodeConfig::default();
-
-                if let Some(bind) = &self.bind {
-                    config.bind_addr = bind.clone();
-                }
-
-                if !self.peer.is_empty() {
-                    config.peers = self.peer.clone();
-                }
+                config.bind_addr = bind.clone();
+                config.peers = peer.clone();
 
                 let genesis = genesis_block();
                 let chain = ChainState::new(genesis);
