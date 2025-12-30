@@ -40,7 +40,8 @@ impl Cli {
                 config.peers = peer.clone();
 
                 let genesis = genesis_block();
-                let chain = ChainState::new(genesis);
+                let chain = ChainState::load_or_init("./egg-data", genesis);
+
 
                 run_node(config, chain);
             }
