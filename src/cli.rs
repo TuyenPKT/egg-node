@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use crate::node::start_node;
+use crate::node::run_node;
 
 #[derive(Parser)]
 pub struct Cli {
@@ -22,7 +22,7 @@ impl Cli {
                 println!("Initializing node...");
             }
             Commands::Run => {
-                crate::node::run_node();
+                run_node();
             }
             Commands::Mine => {
                 println!("Mining...");

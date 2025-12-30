@@ -2,6 +2,7 @@ mod chain;
 mod node;
 mod cli;
 mod config;
+mod p2p;
 
 use crate::cli::Cli;
 use clap::Parser;
