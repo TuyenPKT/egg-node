@@ -1,22 +1,14 @@
-use anyhow::Result;
-use tracing::info;
-
-mod cli;
+mod chain;
 mod node;
-mod p2p;
-mod rpc;
+mod cli;
 mod config;
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
+use crate::cli::Cli;
+use clap::Parser;
 
-    let args = cli::parse();
-    info!("Starting egg-node with args: {:?}", args);
+fn main() {
+    env_logger::init();
 
-    let cfg = config::load(&args)?;
-    let mut node = node::Runtime::new(cfg);
-
-    node.start().await?;
-    Ok(())
+    let cli = Cli::parse();
+    cli.execute();
 }

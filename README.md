@@ -1,0 +1,2 @@
+Genesis hash:
+74ce374fc89352c01081ee0ae0d0122a727a1823e821a9082c58bfd3fadc85ec
