@@ -1,4 +1,14 @@
-pub const P2P_PORT: u16 = 8333;
+#[derive(Clone)]
+pub struct NodeConfig {
+    pub bind_addr: String,
+    pub peers: Vec<String>,
+}
 
-// Chỉ client mới dùng seed này
-pub const DEFAULT_SEED: &str = "180.93.1.235:8333";
+impl NodeConfig {
+    pub fn default() -> Self {
+        NodeConfig {
+            bind_addr: "0.0.0.0:8333".to_string(),
+            peers: vec![],
+        }
+    }
+}
