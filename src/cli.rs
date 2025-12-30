@@ -5,6 +5,7 @@ use crate::node::run_node;
 use crate::chain::genesis_block;
 use crate::chain::state::ChainState;
 
+
 #[derive(Parser)]
 #[command(author, version, about)]
 pub struct Cli {
@@ -39,11 +40,14 @@ impl Cli {
                 config.bind_addr = bind.clone();
                 config.peers = peer.clone();
 
-                let genesis = genesis_block();
-                let chain = ChainState::load_or_init("./egg-data", genesis);
+                use crate::storage::sleddb::ChainDB;
 
+                let genesis = genesis_block();
+                let db = ChainDB::open("./egg-chain");
+                let chain = ChainState::load_or_init(genesis, db);
 
                 run_node(config, chain);
+
             }
         }
     }

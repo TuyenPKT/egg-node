@@ -2,10 +2,8 @@ use std::collections::HashMap;
 
 use crate::chain::block::Block;
 use crate::chain::hash::hash_header;
-use crate::storage::ChainDB;
+use crate::storage::sleddb::ChainDB;
 use crate::chain::validation::validate_genesis;
-
-
 
 pub struct ChainState {
     pub blocks: HashMap<[u8; 32], Block>,
@@ -14,16 +12,33 @@ pub struct ChainState {
     pub db: ChainDB,
 }
 
-
 impl ChainState {
-    pub fn load_or_init(path: &str, genesis: Block) -> Self {
-        let db = ChainDB::open(path);
+    pub fn new(genesis: Block, db: ChainDB) -> Self {
+        let hash = hash_header(&genesis.header);
 
-        if let Some((tip, height)) = db.load_tip() {
+        db.put_block(&hash, &genesis);
+        db.set_tip(&hash, 0);
+
+        let mut blocks = HashMap::new();
+        blocks.insert(hash, genesis);
+
+        ChainState {
+            blocks,
+            tip: hash,
+            height: 0,
+            db,
+        }
+    }
+
+    pub fn load_or_init(genesis: Block, db: ChainDB) -> Self {
+        if !validate_genesis(&genesis) {
+            panic!("Invalid genesis block");
+        }
+
+        if let Some((tip, height)) = db.get_tip() {
             let mut blocks = HashMap::new();
-            if let Some(block) = db.load_block(&tip) {
-                blocks.insert(tip, block);
-            }
+            let block = db.get_block(&tip).expect("missing tip block");
+            blocks.insert(tip, block);
 
             ChainState {
                 blocks,
@@ -32,35 +47,22 @@ impl ChainState {
                 db,
             }
         } else {
-            if !validate_genesis(&genesis) {
-                panic!("Invalid genesis block");
-            }
-
-            let hash = hash_header(&genesis.header);
-            db.save_block(&genesis, 0);
-
-            let mut blocks = HashMap::new();
-            blocks.insert(hash, genesis);
-
-            ChainState {
-                blocks,
-                tip: hash,
-                height: 0,
-                db,
-            }
+            Self::new(genesis, db)
         }
     }
 
     pub fn has_block(&self, hash: &[u8; 32]) -> bool {
-        self.blocks.contains_key(hash) || self.db.load_block(hash).is_some()
+        self.blocks.contains_key(hash)
     }
 
     pub fn add_block(&mut self, block: Block) {
         let hash = hash_header(&block.header);
-        self.height += 1;
 
-        self.db.save_block(&block, self.height);
-        self.blocks.insert(hash, block);
+        self.db.put_block(&hash, &block);
+        self.height += 1;
+        self.db.set_tip(&hash, self.height);
+
         self.tip = hash;
+        self.blocks.insert(hash, block);
     }
 }
