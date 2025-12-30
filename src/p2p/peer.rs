@@ -4,23 +4,22 @@ use std::io::{Read, Write};
 use crate::p2p::message::Message;
 use crate::chain::state::ChainState;
 use crate::chain::genesis_hash;
+use crate::node::generate_node_id;
 
-
-
-pub fn perform_handshake(mut stream: &TcpStream) -> std::io::Result<()> {
-    let msg = Message::Handshake {
+pub fn outbound_connect(
+    mut stream: TcpStream,
+    chain: &mut ChainState,
+) -> std::io::Result<()> {
+    // --- SEND HANDSHAKE ---
+    let handshake = Message::Handshake {
         protocol_version: 1,
         genesis_hash: genesis_hash(),
-        node_id: rand::random(),
+        node_id: generate_node_id(),
     };
+    send(&mut stream, &handshake);
 
-    let data = bincode::serialize(&msg).unwrap();
-    stream.write_all(&data)?;
-
-    let mut buf = [0u8; 512];
-    let size = stream.read(&mut buf)?;
-    let peer_msg: Message = bincode::deserialize(&buf[..size]).unwrap();
-
+    // --- RECEIVE HANDSHAKE ---
+    let peer_msg = recv(&mut stream)?;
     match peer_msg {
         Message::Handshake {
             protocol_version,
@@ -40,15 +39,18 @@ pub fn perform_handshake(mut stream: &TcpStream) -> std::io::Result<()> {
                 ));
             }
         }
-        _ => return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Invalid handshake",
-        )),
+        _ => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid handshake",
+            ));
+        }
     }
 
+    // --- AFTER HANDSHAKE ---
+    handle_peer(stream, chain);
     Ok(())
 }
-
 
 pub fn handle_peer(mut stream: TcpStream, chain: &mut ChainState) {
     let mut buf = [0u8; 8192];
@@ -60,10 +62,7 @@ pub fn handle_peer(mut stream: TcpStream, chain: &mut ChainState) {
             Err(_) => return,
         };
 
-        let msg: Message = match bincode::deserialize(&buf[..size]) {
-            Ok(m) => m,
-            Err(_) => return,
-        };
+        let msg: Message = bincode::deserialize(&buf[..size]).unwrap();
 
         match msg {
             Message::GetTip => {
@@ -105,4 +104,10 @@ pub fn handle_peer(mut stream: TcpStream, chain: &mut ChainState) {
 fn send(stream: &mut TcpStream, msg: &Message) {
     let data = bincode::serialize(msg).unwrap();
     let _ = stream.write_all(&data);
+}
+
+fn recv(stream: &mut TcpStream) -> std::io::Result<Message> {
+    let mut buf = [0u8; 1024];
+    let size = stream.read(&mut buf)?;
+    Ok(bincode::deserialize(&buf[..size]).unwrap())
 }
