@@ -22,7 +22,7 @@ impl Cli {
                 println!("Initializing node...");
             }
             Commands::Run => {
-                start_node();
+                crate::node::run_node();
             }
             Commands::Mine => {
                 println!("Mining...");

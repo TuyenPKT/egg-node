@@ -1,8 +1,22 @@
 use serde::{Serialize, Deserialize};
+use crate::chain::block::Block;
 
 #[derive(Serialize, Deserialize)]
-pub struct Handshake {
-    pub protocol_version: u32,
-    pub genesis_hash: [u8; 32],
-    pub node_id: [u8; 32],
+pub enum Message {
+    Handshake {
+        protocol_version: u32,
+        genesis_hash: [u8; 32],
+        node_id: [u8; 32],
+    },
+    GetTip,
+    Tip {
+        hash: [u8; 32],
+        height: u64,
+    },
+    GetBlock {
+        hash: [u8; 32],
+    },
+    Block {
+        block: Block,
+    },
 }

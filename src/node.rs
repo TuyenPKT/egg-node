@@ -1,29 +1,57 @@
+use std::net::{TcpListener, TcpStream};
+use std::thread;
+
+use crate::config::{P2P_PORT, SEED_PEERS};
+use crate::chain::state::ChainState;
 use crate::chain::genesis_block;
-use crate::chain::validation::validate_genesis;
-use crate::chain::block::Block;
+use crate::p2p::peer::{handle_peer, perform_handshake};
 
-use rand::RngCore;
+pub fn run_node() {
+    let mut chain = ChainState::new(genesis_block());
 
-/// Giả lập việc load blockchain khi node start
-pub fn start_node() {
-    println!("Starting Egg Node...");
+    // 1. Lắng nghe incoming peer
+    let listener = TcpListener::bind(("0.0.0.0", P2P_PORT))
+        .expect("Bind P2P port failed");
 
-    // BƯỚC 1: Load genesis (hiện tại ta CHƯA có storage)
-    let genesis: Block = genesis_block();
+    println!("Node listening on port {}", P2P_PORT);
 
-    // BƯỚC 2: Validate genesis
-    if !validate_genesis(&genesis) {
-        // Nếu genesis sai → dừng node ngay
-        panic!("Genesis block INVALID. Refusing to start node.");
+    // Thread accept incoming
+    let chain_ptr = std::sync::Arc::new(std::sync::Mutex::new(chain));
+    let chain_accept = chain_ptr.clone();
+
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            if let Ok(stream) = stream {
+                let chain = chain_accept.clone();
+                thread::spawn(move || {
+                    let mut chain = chain.lock().unwrap();
+                    handle_peer(stream, &mut chain);
+                });
+            }
+        }
+    });
+
+    // 2. Chủ động connect seed peers
+    for peer in SEED_PEERS {
+        match TcpStream::connect(peer) {
+            Ok(stream) => {
+                println!("Connected to peer {}", peer);
+                if perform_handshake(&stream).is_ok() {
+                    let chain = chain_ptr.clone();
+                    thread::spawn(move || {
+                        let mut chain = chain.lock().unwrap();
+                        handle_peer(stream, &mut chain);
+                    });
+                }
+            }
+            Err(e) => {
+                println!("Cannot connect {}: {}", peer, e);
+            }
+        }
     }
 
-    // BƯỚC 3: Nếu OK
-    println!("Genesis block valid.");
-    println!("Node started successfully.");
-}
-
-pub fn generate_node_id() -> [u8; 32] {
-    let mut id = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut id);
-    id
+    // Giữ process sống
+    loop {
+        std::thread::park();
+    }
 }

@@ -9,6 +9,9 @@ pub mod block;
 pub mod header;
 pub mod tx;
 pub mod validation;
+pub mod hash;
+pub mod state;
+
 
 
 

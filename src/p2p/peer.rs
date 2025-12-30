@@ -1,51 +1,70 @@
 use std::net::TcpStream;
 use std::io::{Read, Write};
 
-use crate::p2p::message::Handshake;
+use crate::p2p::message::Message;
+use crate::chain::state::ChainState;
+use crate::chain::hash::hash_header;
 use crate::chain::genesis_hash;
+use crate::node::generate_node_id;
 
-pub fn perform_handshake(mut stream: TcpStream) -> std::io::Result<()> {
-    // gửi handshake của mình
-    let my_handshake = Handshake {
+//
+// ===== HANDSHAKE =====
+//
+
+pub fn perform_handshake(stream: &TcpStream) -> std::io::Result<()> {
+    // Clone stream chỉ để handshake (read/write)
+    let mut stream = stream.try_clone()?;
+
+    let msg = Message::Handshake {
         protocol_version: 1,
         genesis_hash: genesis_hash(),
-        node_id: crate::node::generate_node_id(),
+        node_id: generate_node_id(),
     };
 
-    let payload = bincode::serialize(&my_handshake).unwrap();
-    stream.write_all(&payload)?;
+    send(&mut stream, &msg);
 
-    // nhận handshake từ peer
     let mut buf = [0u8; 512];
     let size = stream.read(&mut buf)?;
-    let peer_handshake: Handshake =
-        bincode::deserialize(&buf[..size]).unwrap();
 
-    // === BƯỚC 4: KIỂM TRA HANDSHAKE ===
-    validate_handshake(&peer_handshake)?;
+    let peer_msg: Message = bincode::deserialize(&buf[..size])
+        .map_err(|_| std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Invalid handshake message"
+        ))?;
+
+    match peer_msg {
+        Message::Handshake {
+            protocol_version,
+            genesis_hash,
+            ..
+        } => {
+            if protocol_version != 1 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Protocol version mismatch",
+                ));
+            }
+
+            if genesis_hash != genesis_hash() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Genesis hash mismatch",
+                ));
+            }
+        }
+        _ => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Expected handshake message",
+            ));
+        }
+    }
 
     Ok(())
 }
 
-// ===============================
-// BƯỚC 4 — KIỂM TRA HANDSHAKE
-// ===============================
-fn validate_handshake(peer: &Handshake) -> std::io::Result<()> {
-    // kiểm tra version
-    if peer.protocol_version != 1 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Protocol version mismatch",
-        ));
-    }
+//
+// ===== PEER MESSAGE LOOP =====
+//
 
-    // kiểm tra genesis
-    if peer.genesis_hash != genesis_hash() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Genesis hash mismatch",
-        ));
-    }
-
-    Ok(())
-}
+pub fn handle_peer(mut stream: TcpStream, chain: &mut ChainStat_
