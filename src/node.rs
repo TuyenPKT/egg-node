@@ -1,6 +1,7 @@
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 use std::sync::{Arc, Mutex};
+use std::net::SocketAddr;
 
 use crate::config::{P2P_PORT, SEED_PEERS};
 use crate::chain::state::ChainState;
@@ -43,26 +44,36 @@ pub fn run_node() {
     }
 
     // 2. Chủ động connect seed peers
-    for peer in SEED_PEERS {
-        match TcpStream::connect(peer) {
-            Ok(stream) => {
-                println!("Connected to peer {}", peer);
-                if perform_handshake(&stream).is_ok() {
-                    let chain = Arc::clone(&chain);
-                    thread::spawn(move || {
-                        let mut chain = chain.lock().unwrap();
-                        handle_peer(stream, &mut chain);
-                    });
-                }
-            }
-            Err(e) => {
-                println!("Cannot connect {}: {}", peer, e);
+    let local_addr: SocketAddr = format!("0.0.0.0:{}", P2P_PORT)
+    .parse()
+    .unwrap();
+
+// Nếu KHÔNG phải seed node thì mới connect
+if !is_seed_node() {
+    match TcpStream::connect(crate::config::DEFAULT_SEED) {
+        Ok(stream) => {
+            println!("Connected to seed {}", crate::config::DEFAULT_SEED);
+            if perform_handshake(&stream).is_ok() {
+                let chain = chain_ptr.clone();
+                thread::spawn(move || {
+                    let mut chain = chain.lock().unwrap();
+                    handle_peer(stream, &mut chain);
+                });
             }
         }
+        Err(e) => {
+            println!("Cannot connect seed: {}", e);
+        }
     }
+}
 
     // Giữ process sống
     loop {
         thread::park();
     }
+}
+
+fn is_seed_node() -> bool {
+    // Seed node được xác định bằng biến môi trường
+    std::env::var("EGG_SEED").is_ok()
 }
