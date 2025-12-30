@@ -3,28 +3,22 @@ use std::io::{Read, Write};
 
 use crate::p2p::message::Message;
 use crate::chain::state::ChainState;
+use crate::chain::genesis_hash;
 
-use rand::RngCore;
 
 
-pub fn perform_handshake(stream: &TcpStream) -> std::io::Result<()> {
-    let mut stream = stream.try_clone()?;
-
-    let mut node_id = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut node_id);
-
-    let handshake = Message::Handshake {
+pub fn perform_handshake(mut stream: &TcpStream) -> std::io::Result<()> {
+    let msg = Message::Handshake {
         protocol_version: 1,
-        genesis_hash: crate::chain::genesis_hash(),
-        node_id: [0u8; 32],
+        genesis_hash: genesis_hash(),
+        node_id: rand::random(),
     };
 
-    let data = bincode::serialize(&handshake).unwrap();
+    let data = bincode::serialize(&msg).unwrap();
     stream.write_all(&data)?;
 
-    let mut buf = [0u8; 1024];
+    let mut buf = [0u8; 512];
     let size = stream.read(&mut buf)?;
-
     let peer_msg: Message = bincode::deserialize(&buf[..size]).unwrap();
 
     match peer_msg {
@@ -39,7 +33,6 @@ pub fn perform_handshake(stream: &TcpStream) -> std::io::Result<()> {
                     "Protocol mismatch",
                 ));
             }
-
             if genesis_hash != crate::chain::genesis_hash() {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -47,16 +40,15 @@ pub fn perform_handshake(stream: &TcpStream) -> std::io::Result<()> {
                 ));
             }
         }
-        _ => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Invalid handshake",
-            ));
-        }
+        _ => return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Invalid handshake",
+        )),
     }
 
     Ok(())
 }
+
 
 pub fn handle_peer(mut stream: TcpStream, chain: &mut ChainState) {
     let mut buf = [0u8; 8192];
