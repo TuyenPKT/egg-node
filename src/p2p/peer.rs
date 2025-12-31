@@ -66,28 +66,33 @@ pub fn handle_peer(mut stream: TcpStream, chain: &mut ChainState) {
 
         match msg {
             Message::GetTip => {
+                let meta = chain.blocks.get(&chain.tip).unwrap();
+
                 let reply = Message::Tip {
                     hash: chain.tip,
-                    height: chain.height,
+                    height: meta.height,
                 };
                 send(&mut stream, &reply);
             }
 
+
             Message::Tip { hash, .. } => {
-                if !chain.has_block(&hash) {
+                if !chain.blocks.contains_key(&hash) {
                     let req = Message::GetBlock { hash };
                     send(&mut stream, &req);
                 }
             }
 
+
             Message::GetBlock { hash } => {
-                if let Some(block) = chain.blocks.get(&hash) {
+                if let Some(meta) = chain.blocks.get(&hash) {
                     let reply = Message::Block {
-                        block: block.clone(),
+                        block: meta.block.clone(),
                     };
                     send(&mut stream, &reply);
                 }
             }
+
 
             Message::Block { block } => {
                 if !chain.add_block(block) {
