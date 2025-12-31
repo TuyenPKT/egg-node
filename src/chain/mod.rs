@@ -1,6 +1,9 @@
 use crate::chain::block::{Block, merkle_root};
 use crate::chain::header::BlockHeader;
 use crate::chain::tx::Transaction;
+
+
+
 use sha2::{Sha256, Digest};
 use bincode;
 
@@ -11,16 +14,20 @@ pub mod tx;
 pub mod validation;
 pub mod hash;
 pub mod state;
+pub mod reward;
+
 
 
 
 
 pub fn genesis_block() -> Block {
-    let tx = Transaction::genesis(
-        "Egg Core Genesis — Re-establishing the right to run a node at home — 2025-01-01"
+    let coinbase = Transaction::coinbase(
+        b"genesis".to_vec(),
+        0,
+        "Egg Core Genesis — Re-establishing the right to run a node at home — 2025-01-01",
     );
 
-    let txs = vec![tx];
+    let txs = vec![coinbase];
 
     let header = BlockHeader {
         version: 1,

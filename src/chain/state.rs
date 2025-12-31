@@ -50,6 +50,22 @@ impl ChainState {
             return false;
         }
 
+        // 1.5 validate coinbase
+        if block.transactions.is_empty() {
+            return false;
+        }
+
+        let coinbase = &block.transactions[0];
+        if !coinbase.is_coinbase() {
+            return false;
+        }
+
+        // chỉ cho phép 1 coinbase
+        if block.transactions.iter().filter(|t| t.is_coinbase()).count() != 1 {
+            return false;
+        }
+
+
         let parent = block.header.prev_hash;
 
         // 2. parent must exist
