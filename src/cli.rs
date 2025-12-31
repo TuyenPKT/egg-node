@@ -18,7 +18,9 @@ pub enum Commands {
         #[arg(long)]
         address: String,
     },
+    Utxo,
 }
+
 
 
 impl Cli {
@@ -72,6 +74,31 @@ impl Cli {
                     println!("Mined new block: {:x?}", hash);
                 } else {
                     println!("Mining failed (invalid block)");
+                }
+            }
+
+            Commands::Utxo => {
+                use crate::storage::sleddb::ChainDB;
+                use crate::chain::genesis_block;
+                use crate::chain::state::ChainState;
+
+                let genesis = genesis_block();
+                let db = ChainDB::open("./egg-chain");
+                let chain = ChainState::load_or_init(genesis, db);
+
+                if chain.utxos.is_empty() {
+                    println!("No UTXO found");
+                    return;
+                }
+
+                for utxo in chain.utxos.values() {
+                    println!(
+                        "UTXO {}:{} value={} height={}",
+                        hex::encode(utxo.txid),
+                        utxo.vout,
+                        utxo.value,
+                        utxo.height
+                    );
                 }
             }
         }

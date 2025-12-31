@@ -45,3 +45,24 @@ impl ChainDB {
         ))
     }
 }
+
+
+use crate::chain::utxo::UTXO;
+
+impl ChainDB {
+    pub fn put_utxo(&self, utxo: &UTXO) {
+        let key = format!("utxo:{:x?}:{}", utxo.txid, utxo.vout);
+        let val = bincode::serialize(utxo).unwrap();
+        self.db.insert(key.as_bytes(), val).unwrap();
+    }
+
+    pub fn iter_utxos(&self) -> Vec<UTXO> {
+        let mut list = Vec::new();
+        for item in self.db.scan_prefix(b"utxo:") {
+            let (_, val) = item.unwrap();
+            let utxo: UTXO = bincode::deserialize(&val).unwrap();
+            list.push(utxo);
+        }
+        list
+    }
+}

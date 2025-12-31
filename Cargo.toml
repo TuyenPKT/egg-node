@@ -15,3 +15,4 @@ clap = { version = "4.5", features = ["derive"] }
 log = "0.4"
 env_logger = "0.11"
 sled = "0.34"
+hex = "0.4"
