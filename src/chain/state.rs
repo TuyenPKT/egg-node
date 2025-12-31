@@ -9,6 +9,7 @@ use crate::pow::work::work_from_bits;
 #[derive(Clone)]
 pub struct BlockMeta {
     pub block: Block,
+    pub parent: [u8; 32],
     pub height: u64,
     pub total_work: u128,
 }
