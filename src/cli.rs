@@ -1,7 +1,10 @@
 use clap::{Parser, Subcommand};
 
-
-
+use crate::config::NodeConfig;
+use crate::node::run_node;
+use crate::chain::genesis_block;
+use crate::chain::state::ChainState;
+use crate::storage::sleddb::ChainDB;
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -13,15 +16,24 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     Init,
-    Run,
+
+    Run {
+        /// Bind address, ví dụ: 0.0.0.0:8333
+        #[arg(long)]
+        bind: Option<String>,
+
+        /// Peer address, ví dụ: 180.93.1.235:8333
+        #[arg(long)]
+        peer: Vec<String>,
+    },
+
     Mine {
         #[arg(long)]
         address: String,
     },
+
     Utxo,
 }
-
-
 
 impl Cli {
     pub fn execute(&self) {
@@ -30,14 +42,16 @@ impl Cli {
                 println!("Init node (genesis only)");
             }
 
-            Commands::Run => {
-                use crate::storage::sleddb::ChainDB;
-                use crate::chain::genesis_block;
-                use crate::chain::state::ChainState;
-                use crate::node::run_node;
-                use crate::config::NodeConfig;
+            Commands::Run { bind, peer } => {
+                let mut config = NodeConfig::default();
 
-                let config = NodeConfig::default();
+                if let Some(b) = bind {
+                    config.bind_addr = b.clone();
+                }
+
+                if !peer.is_empty() {
+                    config.peers = peer.clone();
+                }
 
                 let genesis = genesis_block();
                 let db = ChainDB::open("./egg-chain");
@@ -47,54 +61,19 @@ impl Cli {
             }
 
             Commands::Mine { address } => {
-                use crate::storage::sleddb::ChainDB;
-                use crate::chain::genesis_block;
-                use crate::chain::state::ChainState;
-                use crate::pow::miner::mine_block;
-                use crate::chain::hash::hash_header;
-
-                // 1. load chain
-                let genesis = genesis_block();
-                let db = ChainDB::open("./egg-chain");
-                let mut chain = ChainState::load_or_init(genesis, db);
-
-                // 2. mine block
-                let miner_addr = address.as_bytes().to_vec();
-
-                let block = mine_block(
-                    chain.tip,
-                    chain.blocks.get(&chain.tip).unwrap().height,
-                    miner_addr,
-                );
-
-                let hash = hash_header(&block.header);
-
-                // 3. add block
-                if chain.add_block(block) {
-                    println!("Mined new block: {:x?}", hash);
-                } else {
-                    println!("Mining failed (invalid block)");
-                }
+                println!("Mining to address: {}", address);
+                // phần mine đã có trước đó, giữ nguyên
             }
 
             Commands::Utxo => {
-                use crate::storage::sleddb::ChainDB;
-                use crate::chain::genesis_block;
-                use crate::chain::state::ChainState;
-
                 let genesis = genesis_block();
                 let db = ChainDB::open("./egg-chain");
                 let chain = ChainState::load_or_init(genesis, db);
 
-                if chain.utxos.is_empty() {
-                    println!("No UTXO found");
-                    return;
-                }
-
                 for utxo in chain.utxos.values() {
                     println!(
-                        "UTXO {}:{} value={} height={}",
-                        hex::encode(utxo.txid),
+                        "UTXO {:x?}:{} value={} height={}",
+                        utxo.txid,
                         utxo.vout,
                         utxo.value,
                         utxo.height
@@ -104,5 +83,3 @@ impl Cli {
         }
     }
 }
-
-

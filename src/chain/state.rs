@@ -26,57 +26,63 @@ pub struct ChainState {
 
 impl ChainState {
     pub fn load_or_init(genesis: Block, db: ChainDB) -> Self {
-    let hash = hash_header(&genesis.header);
+        let genesis_hash = hash_header(&genesis.header);
 
-    let mut blocks = HashMap::new();
-    let mut tip = hash;
+        let mut blocks = HashMap::new();
+        let mut utxos = HashMap::new();
 
-    // --- LOAD CHAIN ---
-    if let Some((saved_tip, height)) = db.get_tip() {
-        tip = saved_tip;
+        // luôn đảm bảo genesis tồn tại trong DB
+        db.put_block(&genesis_hash, &genesis);
 
-        // chỉ load block tip (Giai đoạn này chưa replay toàn chain)
-        let block = db
-            .get_block(&saved_tip)
-            .expect("missing tip block");
+        blocks.insert(
+            genesis_hash,
+            BlockMeta {
+                block: genesis.clone(),
+                parent: [0u8; 32],
+                height: 0,
+                total_work: 0,
+            },
+        );
 
-        let meta = BlockMeta {
-            parent: block.header.prev_hash,
-            height,
-            total_work: 0, // work đã dùng để chọn tip rồi
-            block,
-        };
+        let mut tip = genesis_hash;
 
-        blocks.insert(saved_tip, meta);
-    } else {
-        // INIT GENESIS
-        let meta = BlockMeta {
-            block: genesis,
-            parent: [0u8; 32],
-            height: 0,
-            total_work: 0,
-        };
+        if let Some((stored_tip, _)) = db.get_tip() {
+            if let Some(block) = db.get_block(&stored_tip) {
+                let hash = hash_header(&block.header);
 
-        db.put_block(&hash, &meta.block);
-        db.set_tip(&hash, 0);
+                blocks.insert(
+                    hash,
+                    BlockMeta {
+                        block: block.clone(),
+                        parent: block.header.prev_hash,
+                        height: 1, // tạm thời
+                        total_work: work_from_bits(block.header.bits),
+                    },
+                );
 
-        blocks.insert(hash, meta);
+                tip = hash;
+            } else {
+                eprintln!("DB tip missing block, reset to genesis");
+                db.set_tip(&genesis_hash, 0);
+            }
+        } else {
+            db.set_tip(&genesis_hash, 0);
+        }
+
+        // load utxo
+        for u in db.iter_utxos() {
+            utxos.insert((u.txid, u.vout), u);
+        }
+
+        ChainState {
+            blocks,
+            tip,
+            utxos,
+            db,
+        }
     }
 
-    // --- LOAD UTXO FROM DB ---
-    let utxos: HashMap<([u8; 32], u32), UTXO> = db
-        .iter_utxos()
-        .into_iter()
-        .map(|u| ((u.txid, u.vout), u))
-        .collect();
 
-    ChainState {
-        blocks,
-        tip,
-        utxos,
-        db,
-    }
-}
 
 
     pub fn add_block(&mut self, block: Block) -> bool {
@@ -150,8 +156,19 @@ impl ChainState {
 
 
     fn maybe_update_tip(&mut self, candidate: [u8; 32]) {
-        let cand = self.blocks.get(&candidate).unwrap();
-        let best = self.blocks.get(&self.tip).unwrap();
+        let cand = match self.blocks.get(&candidate) {
+            Some(c) => c,
+            None => return,
+        };
+
+        let best = match self.blocks.get(&self.tip) {
+            Some(b) => b,
+            None => {
+                self.tip = candidate;
+                self.db.set_tip(&candidate, cand.height);
+                return;
+            }
+        };
 
         let better = cand.total_work > best.total_work
             || (cand.total_work == best.total_work && cand.height > best.height);
@@ -161,4 +178,5 @@ impl ChainState {
             self.db.set_tip(&candidate, cand.height);
         }
     }
+
 }

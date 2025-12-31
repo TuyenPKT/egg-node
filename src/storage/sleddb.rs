@@ -39,7 +39,7 @@ impl ChainDB {
     pub fn set_tip(&self, hash: &[u8; 32], height: u64) {
         self.db.insert(b"meta:tip", hash).unwrap();
         self.db
-            .insert(b"meta:height", height.to_le_bytes())
+            .insert(b"meta:height", &height.to_le_bytes())
             .unwrap();
     }
 
