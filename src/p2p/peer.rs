@@ -90,11 +90,12 @@ pub fn handle_peer(mut stream: TcpStream, chain: &mut ChainState) {
             }
 
             Message::Block { block } => {
-                let prev = block.header.prev_hash;
-                if chain.has_block(&prev) {
-                    chain.add_block(block);
+                if !chain.add_block(block) {
+                    eprintln!("Rejected invalid PoW block");
+                    return;
                 }
             }
+
 
             _ => {}
         }

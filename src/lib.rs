@@ -1,5 +1,7 @@
-pub mod storage;
 pub mod chain;
+pub mod pow;
 pub mod p2p;
 pub mod node;
 pub mod config;
+pub mod storage;
+pub mod cli;

@@ -4,6 +4,10 @@ use crate::chain::block::Block;
 use crate::chain::hash::hash_header;
 use crate::storage::sleddb::ChainDB;
 use crate::chain::validation::validate_genesis;
+use crate::pow::verify::verify_pow;
+
+
+
 
 pub struct ChainState {
     pub blocks: HashMap<[u8; 32], Block>,
@@ -55,7 +59,19 @@ impl ChainState {
         self.blocks.contains_key(hash)
     }
 
-    pub fn add_block(&mut self, block: Block) {
+    pub fn add_block(&mut self, block: Block) -> bool {
+        let prev = block.header.prev_hash;
+
+        // 1. prev block phải tồn tại
+        if !self.blocks.contains_key(&prev) {
+            return false;
+        }
+
+        // 2. verify PoW
+        if !verify_pow(&block.header) {
+            return false;
+        }
+
         let hash = hash_header(&block.header);
 
         self.db.put_block(&hash, &block);
@@ -64,5 +80,6 @@ impl ChainState {
 
         self.tip = hash;
         self.blocks.insert(hash, block);
+        true
     }
 }
