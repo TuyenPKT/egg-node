@@ -67,8 +67,9 @@ impl ChainState {
             block: block.clone(),
             parent,
             height: parent_meta.height + 1,
-            total_work: parent_meta.total_work + work,
+            total_work: parent_meta.total_work.saturating_add(work),
         };
+
 
         // 4. store
         self.blocks.insert(hash, meta.clone());
