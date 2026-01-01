@@ -7,7 +7,6 @@ use crate::chain::txid::txid;
 use crate::storage::sleddb::ChainDB;
 use crate::pow::verify::verify_pow;
 use crate::pow::work::work_from_bits;
-use crate::chain::sign::verify_tx;
 
 #[derive(Clone)]
 pub struct BlockMeta {
@@ -25,54 +24,76 @@ pub struct ChainState {
 }
 
 impl ChainState {
+    /// Load chain from disk, or initialize with genesis
     pub fn load_or_init(genesis: Block, db: ChainDB) -> Self {
-        let hash = hash_header(&genesis.header);
+        let genesis_hash = hash_header(&genesis.header);
 
+        let mut blocks = HashMap::new();
+        let mut utxos = HashMap::new();
+
+        // Nếu DB đã có tip → load chain tối thiểu
+        if let Some((tip, height)) = db.get_tip() {
+            let block = db
+                .get_block(&tip)
+                .expect("DB corrupted: missing tip block");
+
+            let meta = BlockMeta {
+                block,
+                parent: [0u8; 32], // fork sâu load sau
+                height,
+                total_work: 0,
+            };
+
+            blocks.insert(tip, meta);
+
+            // load UTXO
+            for utxo in db.iter_utxos() {
+                utxos.insert((utxo.txid, utxo.vout), utxo);
+            }
+
+            return ChainState {
+                blocks,
+                tip,
+                utxos,
+                db,
+            };
+        }
+
+        // --- INIT GENESIS ---
         let meta = BlockMeta {
-            block: genesis,
+            block: genesis.clone(),
             parent: [0u8; 32],
             height: 0,
             total_work: 0,
         };
 
-        db.put_block(&hash, &meta.block);
-        db.set_tip(&hash, 0);
-
-        let mut blocks = HashMap::new();
-        blocks.insert(hash, meta);
-
-        let utxos = db
-            .iter_utxos()
-            .into_iter()
-            .map(|u| ((u.txid, u.vout), u))
-            .collect();
+        blocks.insert(genesis_hash, meta);
+        db.put_block(&genesis_hash, &genesis);
+        db.set_tip(&genesis_hash, 0);
 
         ChainState {
             blocks,
-            tip: hash,
+            tip: genesis_hash,
             utxos,
             db,
         }
     }
 
+    /// Add block with PoW + UTXO + fork-choice
     pub fn add_block(&mut self, block: Block) -> bool {
-        // 1. verify PoW
+        // 1. Verify PoW
         if !verify_pow(&block.header) {
             return false;
         }
 
-        // 2. parent check
         let parent = block.header.prev_hash;
         let parent_meta = match self.blocks.get(&parent) {
             Some(m) => m.clone(),
             None => return false,
         };
 
-        // 3. verify & spend normal tx
+        // 2. Verify & spend inputs (skip coinbase)
         for tx in block.transactions.iter().skip(1) {
-            if !verify_tx(tx) {
-                return false;
-            }
             for inp in &tx.inputs {
                 let key = (inp.prev_txid, inp.vout);
                 if !self.utxos.contains_key(&key) {
@@ -81,15 +102,29 @@ impl ChainState {
             }
         }
 
-        // 4. remove spent UTXO
+        // 3. Remove spent UTXO
         for tx in block.transactions.iter().skip(1) {
             for inp in &tx.inputs {
-                let key = (inp.prev_txid, inp.vout);
-                self.utxos.remove(&key);
+                self.utxos.remove(&(inp.prev_txid, inp.vout));
             }
         }
 
-        // 5. compute meta
+        // 4. Add coinbase UTXO
+        let coinbase = &block.transactions[0];
+        let cb_txid = txid(coinbase);
+
+        for (vout, out) in coinbase.outputs.iter().enumerate() {
+            let utxo = UTXO {
+                txid: cb_txid,
+                vout: vout as u32,
+                value: out.value,
+                address: out.to_address.clone(),
+                height: parent_meta.height + 1,
+            };
+            self.utxos.insert((cb_txid, vout as u32), utxo);
+        }
+
+        // 5. Fork-choice (most-work)
         let hash = hash_header(&block.header);
         let work = work_from_bits(block.header.bits);
 
@@ -100,42 +135,17 @@ impl ChainState {
             total_work: parent_meta.total_work + work,
         };
 
-        // 6. store block
         self.blocks.insert(hash, meta.clone());
         self.db.put_block(&hash, &block);
 
-        // 7. create UTXO from coinbase
-        let coinbase = &block.transactions[0];
-        let id = txid(coinbase);
-
-        for (vout, out) in coinbase.outputs.iter().enumerate() {
-            let utxo = UTXO {
-                txid: id,
-                vout: vout as u32,
-                value: out.value,
-                address: out.to_address.clone(),
-                height: meta.height,
-            };
-            self.utxos.insert((id, vout as u32), utxo.clone());
-            self.db.put_utxo(&utxo);
+        let best = self.blocks.get(&self.tip).unwrap();
+        if meta.total_work > best.total_work
+            || (meta.total_work == best.total_work && meta.height > best.height)
+        {
+            self.tip = hash;
+            self.db.set_tip(&hash, meta.height);
         }
-
-        // 8. fork choice
-        self.maybe_update_tip(hash);
 
         true
-    }
-
-    fn maybe_update_tip(&mut self, candidate: [u8; 32]) {
-        let cand = self.blocks.get(&candidate).unwrap();
-        let best = self.blocks.get(&self.tip).unwrap();
-
-        let better = cand.total_work > best.total_work
-            || (cand.total_work == best.total_work && cand.height > best.height);
-
-        if better {
-            self.tip = candidate;
-            self.db.set_tip(&candidate, cand.height);
-        }
     }
 }

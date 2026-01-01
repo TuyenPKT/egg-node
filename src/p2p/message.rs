@@ -1,5 +1,6 @@
 use serde::{Serialize, Deserialize};
 use crate::chain::block::Block;
+use crate::chain::tx::Transaction;
 
 #[derive(Serialize, Deserialize)]
 pub enum Message {
@@ -18,5 +19,8 @@ pub enum Message {
     },
     Block {
         block: Block,
+    },
+    Tx {
+        tx: Transaction,
     },
 }
