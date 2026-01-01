@@ -17,6 +17,8 @@ pub mod state;
 pub mod reward;
 pub mod txid;
 pub mod utxo;
+pub mod sign;
+
 
 
 
