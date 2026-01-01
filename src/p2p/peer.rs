@@ -54,11 +54,14 @@ pub fn handle_peer(
 
             Message::Tx { tx } => {
                 let mut mempool = mempool.lock().unwrap();
-                if mempool.add(tx.clone()) {
+                let chain = chain.lock().unwrap();
+
+                if mempool.add(tx.clone(), &chain.utxos) {
                     // rebroadcast
                     send(&mut stream, &Message::Tx { tx });
                 }
             }
+
 
             _ => {}
         }
