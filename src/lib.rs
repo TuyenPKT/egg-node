@@ -7,3 +7,4 @@ pub mod storage;
 pub mod cli;
 pub mod mempool;
 mod orphan;
+mod net;

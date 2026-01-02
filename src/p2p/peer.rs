@@ -4,93 +4,61 @@ use std::sync::{Arc, Mutex};
 
 use crate::p2p::message::Message;
 use crate::chain::state::ChainState;
-use crate::chain::hash::hash_header;
 use crate::mempool::Mempool;
 use crate::orphan::tx::OrphanTxPool;
 use crate::orphan::block::OrphanBlockPool;
+use crate::net::ban::BanManager;
+use crate::net::rate::RateLimiter;
 
 pub fn handle_peer(
     mut stream: TcpStream,
+    ip: String,
     chain: Arc<Mutex<ChainState>>,
     mempool: Arc<Mutex<Mempool>>,
     orphan_tx: Arc<Mutex<OrphanTxPool>>,
     orphan_block: Arc<Mutex<OrphanBlockPool>>,
+    ban: Arc<Mutex<BanManager>>,
+    rate: Arc<Mutex<RateLimiter>>,
 ) {
     let mut buf = [0u8; 8192];
 
     loop {
+        if !rate.lock().unwrap().allow(&ip) {
+            if ban.lock().unwrap().add_score(&ip, 20) {
+                return;
+            }
+            continue;
+        }
+
         let size = match stream.read(&mut buf) {
             Ok(0) => return,
             Ok(n) => n,
             Err(_) => return,
         };
 
-        let msg: Message = bincode::deserialize(&buf[..size]).unwrap();
+        let msg: Message = match bincode::deserialize(&buf[..size]) {
+            Ok(m) => m,
+            Err(_) => {
+                ban.lock().unwrap().add_score(&ip, 10);
+                continue;
+            }
+        };
 
         match msg {
-            // ======================================================
-            // TRANSACTION
-            // ======================================================
             Message::Tx { tx } => {
-                let chain_guard = chain.lock().unwrap();
-                let mut mem_guard = mempool.lock().unwrap();
+                let chain = chain.lock().unwrap();
+                let mut mem = mempool.lock().unwrap();
 
-                if !mem_guard.add(tx.clone(), &chain_guard.utxos) {
+                if !mem.add(tx.clone(), &chain.utxos) {
                     orphan_tx.lock().unwrap().add(tx);
                 }
             }
 
-            // ======================================================
-            // BLOCK
-            // ======================================================
             Message::Block { block } => {
-                let mut chain_guard = chain.lock().unwrap();
-
-                if chain_guard.add_block(block.clone()) {
-                    // -------------------------------
-                    // PROMOTE ORPHAN TX (SAFE)
-                    // -------------------------------
-                    {
-                        let utxos_snapshot = chain_guard.utxos.clone();
-                        orphan_tx.lock().unwrap().try_promote(
-                            &utxos_snapshot,
-                            |tx| {
-                                mempool.lock().unwrap().add(tx, &utxos_snapshot);
-                            },
-                        );
-                    }
-
-                    // -------------------------------
-                    // PROMOTE ORPHAN BLOCKS (2-PHASE)
-                    // -------------------------------
-
-                    // Phase 1: collect promotable blocks (immutable access only)
-                    let promotable_blocks: Vec<_> = {
-                        let ob = orphan_block.lock().unwrap();
-                        ob.blocks
-                            .values()
-                            .filter(|o| {
-                                chain_guard
-                                    .blocks
-                                    .contains_key(&o.block.header.prev_hash)
-                            })
-                            .map(|o| o.block.clone())
-                            .collect()
-                    };
-
-                    // Phase 2: apply blocks (mutable access)
-                    for b in promotable_blocks {
-                        if chain_guard.add_block(b.clone()) {
-                            orphan_block
-                                .lock()
-                                .unwrap()
-                                .blocks
-                                .remove(&hash_header(&b.header));
-                        }
-                    }
-                } else {
-                    // orphan block
+                let mut chain = chain.lock().unwrap();
+                if !chain.add_block(block.clone()) {
                     orphan_block.lock().unwrap().add(block);
+                    ban.lock().unwrap().add_score(&ip, 5);
                 }
             }
 
@@ -98,5 +66,3 @@ pub fn handle_peer(
         }
     }
 }
-
-
