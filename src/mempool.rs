@@ -1,67 +1,88 @@
 use std::collections::HashMap;
+
 use crate::chain::tx::Transaction;
 use crate::chain::txid::txid;
 use crate::chain::utxo::UTXO;
 
 #[derive(Clone)]
-pub struct MempoolEntry {
+pub struct MempoolTx {
     pub tx: Transaction,
     pub fee: u64,
-    pub fee_rate: u64, // fee / vbytes (xấp xỉ)
 }
 
 pub struct Mempool {
-    pub map: HashMap<[u8; 32], MempoolEntry>,
+    pub txs: HashMap<[u8; 32], MempoolTx>,
 }
 
 impl Mempool {
     pub fn new() -> Self {
-        Mempool { map: HashMap::new() }
+        Mempool {
+            txs: HashMap::new(),
+        }
     }
 
-    /// Verify inputs exist (caller đảm bảo chữ ký đã verify)
-    pub fn add(&mut self, tx: Transaction, utxos: &HashMap<([u8;32],u32),UTXO>) -> bool {
+    /// Add transaction to mempool after computing fee
+    pub fn add(
+        &mut self,
+        tx: Transaction,
+        utxos: &HashMap<([u8; 32], u32), UTXO>,
+    ) -> bool {
         let id = txid(&tx);
-        if self.map.contains_key(&id) { return false; }
-
-        // coinbase không vào mempool
-        if tx.inputs.len() == 1 && tx.inputs[0].prev_txid == [0u8;32] {
+        if self.txs.contains_key(&id) {
             return false;
         }
 
-        // tính input sum
-        let mut in_sum: u64 = 0;
-        for i in &tx.inputs {
-            if let Some(u) = utxos.get(&(i.prev_txid, i.vout)) {
-                in_sum = in_sum.saturating_add(u.value);
-            } else {
-                return false;
-            }
-        }
+        let fee = match calc_fee(&tx, utxos) {
+            Some(f) => f,
+            None => return false,
+        };
 
-        let out_sum: u64 = tx.outputs.iter().map(|o| o.value).sum();
-        if in_sum < out_sum { return false; }
-
-        let fee = in_sum - out_sum;
-
-        // fee rate xấp xỉ theo kích thước serialized
-        let vbytes = bincode::serialize(&tx).unwrap().len().max(1) as u64;
-        let fee_rate = fee / vbytes;
-
-        self.map.insert(id, MempoolEntry { tx, fee, fee_rate });
+        self.txs.insert(id, MempoolTx { tx, fee });
         true
     }
 
+    /// Remove tx after it is mined
     pub fn remove(&mut self, tx: &Transaction) {
         let id = txid(tx);
-        self.map.remove(&id);
+        self.txs.remove(&id);
     }
 
-    /// Lấy tx theo fee-rate giảm dần, giới hạn số lượng
-    pub fn pick_for_mining(&self, max_txs: usize) -> Vec<MempoolEntry> {
-        let mut v: Vec<MempoolEntry> = self.map.values().cloned().collect();
-        v.sort_by(|a,b| b.fee_rate.cmp(&a.fee_rate));
-        v.truncate(max_txs);
-        v
+    /// Used by fee estimator
+    pub fn fee_list(&self) -> Vec<u64> {
+        self.txs.values().map(|m| m.fee).collect()
+    }
+
+    /// Used by miner: select txs sorted by fee (desc)
+    pub fn select_for_block(&self, max: usize) -> Vec<Transaction> {
+        let mut list: Vec<MempoolTx> = self.txs.values().cloned().collect();
+
+        // sort by fee descending
+        list.sort_by(|a, b| b.fee.cmp(&a.fee));
+
+        list.into_iter()
+            .take(max)
+            .map(|m| m.tx)
+            .collect()
+    }
+}
+
+fn calc_fee(
+    tx: &Transaction,
+    utxos: &HashMap<([u8; 32], u32), UTXO>,
+) -> Option<u64> {
+    let mut input_sum = 0u64;
+
+    for inp in &tx.inputs {
+        let key = (inp.prev_txid, inp.vout);
+        let utxo = utxos.get(&key)?;
+        input_sum += utxo.value;
+    }
+
+    let output_sum: u64 = tx.outputs.iter().map(|o| o.value).sum();
+
+    if input_sum < output_sum {
+        None
+    } else {
+        Some(input_sum - output_sum)
     }
 }
