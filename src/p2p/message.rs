@@ -1,6 +1,6 @@
 use serde::{Serialize, Deserialize};
+use crate::chain::header::BlockHeader;
 use crate::chain::block::Block;
-use crate::chain::tx::Transaction;
 
 #[derive(Serialize, Deserialize)]
 pub enum Message {
@@ -9,18 +9,27 @@ pub enum Message {
         genesis_hash: [u8; 32],
         node_id: [u8; 32],
     },
-    GetTip,
-    Tip {
-        hash: [u8; 32],
-        height: u64,
+
+    // headers-first
+    GetHeaders {
+        from: [u8; 32],
+        limit: u32,
     },
+    Headers {
+        headers: Vec<BlockHeader>,
+    },
+
+    // compact block
+    CompactBlock {
+        header: BlockHeader,
+        txids: Vec<[u8; 32]>,
+    },
+
     GetBlock {
         hash: [u8; 32],
     },
+
     Block {
         block: Block,
-    },
-    Tx {
-        tx: Transaction,
     },
 }

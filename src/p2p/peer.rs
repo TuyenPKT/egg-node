@@ -4,12 +4,11 @@ use std::sync::{Arc, Mutex};
 
 use crate::p2p::message::Message;
 use crate::chain::state::ChainState;
-use crate::mempool::Mempool;
+use crate::chain::hash::hash_header;
 
 pub fn handle_peer(
     mut stream: TcpStream,
     chain: Arc<Mutex<ChainState>>,
-    mempool: Arc<Mutex<Mempool>>,
 ) {
     let mut buf = [0u8; 8192];
 
@@ -23,45 +22,42 @@ pub fn handle_peer(
         let msg: Message = bincode::deserialize(&buf[..size]).unwrap();
 
         match msg {
-            Message::GetTip => {
+            Message::GetHeaders { from, limit } => {
                 let chain = chain.lock().unwrap();
-                let reply = Message::Tip {
-                    hash: chain.tip,
-                    height: chain.blocks.get(&chain.tip).unwrap().height,
-                };
-                send(&mut stream, &reply);
-            }
+                let mut headers = Vec::new();
+                let mut cur = from;
 
-            Message::GetBlock { hash } => {
-                let chain = chain.lock().unwrap();
-                if let Some(meta) = chain.blocks.get(&hash) {
-                    send(&mut stream, &Message::Block {
-                        block: meta.block.clone(),
-                    });
+                for _ in 0..limit {
+                    let meta = match chain.blocks.get(&cur) {
+                        Some(m) => m,
+                        None => break,
+                    };
+                    headers.push(meta.block.header.clone());
+                    cur = hash_header(&meta.block.header);
                 }
+
+                send(&mut stream, &Message::Headers { headers });
             }
 
-            Message::Block { block } => {
-                let mut chain = chain.lock().unwrap();
-                let mut mempool = mempool.lock().unwrap();
-
-                if chain.add_block(block.clone()) {
-                    for tx in block.transactions.iter().skip(1) {
-                        mempool.remove(tx);
+            Message::Headers { headers } => {
+                let chain = chain.lock().unwrap();
+                for h in headers {
+                    if chain.accept_header(&h) {
+                        // header ok, wait compact
                     }
                 }
             }
 
-            Message::Tx { tx } => {
-                let mut mempool = mempool.lock().unwrap();
-                let chain = chain.lock().unwrap();
-
-                if mempool.add(tx.clone(), &chain.utxos) {
-                    // rebroadcast
-                    send(&mut stream, &Message::Tx { tx });
-                }
+            Message::CompactBlock { header, txids: _ } => {
+                // simplified: always request full block
+                let hash = hash_header(&header);
+                send(&mut stream, &Message::GetBlock { hash });
             }
 
+            Message::Block { block } => {
+                let mut chain = chain.lock().unwrap();
+                chain.add_block(block);
+            }
 
             _ => {}
         }

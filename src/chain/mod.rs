@@ -18,6 +18,7 @@ pub mod reward;
 pub mod txid;
 pub mod utxo;
 pub mod sign;
+pub mod undo;
 
 
 
