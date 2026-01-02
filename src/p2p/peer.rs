@@ -1,18 +1,20 @@
 use std::net::TcpStream;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::sync::{Arc, Mutex};
 
 use crate::p2p::message::Message;
 use crate::chain::state::ChainState;
-use crate::chain::block::Block;
 use crate::chain::hash::hash_header;
 use crate::mempool::Mempool;
-
+use crate::orphan::tx::OrphanTxPool;
+use crate::orphan::block::OrphanBlockPool;
 
 pub fn handle_peer(
     mut stream: TcpStream,
     chain: Arc<Mutex<ChainState>>,
     mempool: Arc<Mutex<Mempool>>,
+    orphan_tx: Arc<Mutex<OrphanTxPool>>,
+    orphan_block: Arc<Mutex<OrphanBlockPool>>,
 ) {
     let mut buf = [0u8; 8192];
 
@@ -26,73 +28,70 @@ pub fn handle_peer(
         let msg: Message = bincode::deserialize(&buf[..size]).unwrap();
 
         match msg {
-            Message::GetHeaders { from, limit } => {
-                let chain = chain.lock().unwrap();
-                let mut headers = Vec::new();
-                let mut cur = from;
+            // ======================================================
+            // TRANSACTION
+            // ======================================================
+            Message::Tx { tx } => {
+                let chain_guard = chain.lock().unwrap();
+                let mut mem_guard = mempool.lock().unwrap();
 
-                for _ in 0..limit {
-                    let meta = match chain.blocks.get(&cur) {
-                        Some(m) => m,
-                        None => break,
-                    };
-                    headers.push(meta.block.header.clone());
-                    cur = hash_header(&meta.block.header);
-                }
-
-                send(&mut stream, &Message::Headers { headers });
-            }
-
-            Message::Headers { headers } => {
-                // headers-first: chỉ verify, không apply block
-                let chain = chain.lock().unwrap();
-                for h in headers {
-                    let _ = chain.accept_header(&h);
+                if !mem_guard.add(tx.clone(), &chain_guard.utxos) {
+                    orphan_tx.lock().unwrap().add(tx);
                 }
             }
 
-            Message::CompactBlock { header, txids } => {
-                // ===== COMPACT RECONSTRUCTION =====
-                let mut txs = Vec::new();
-                let mut missing = false;
-
-                let mem = mempool.lock().unwrap();
-
-                for id in txids.iter() {
-                    if let Some(mtx) = mem.txs.get(id) {
-                        txs.push(mtx.tx.clone());
-                    } else {
-                        missing = true;
-                        break;
-                    }
-                }
-
-                drop(mem);
-
-                if missing {
-                    let hash = hash_header(&header);
-                    send(&mut stream, &Message::GetBlock { hash });
-                    continue;
-                }
-
-let block = Block {
-    header,
-    transactions: txs,
-};
-
-// tính hash TRƯỚC khi move
-let hash = hash_header(&block.header);
-
-let mut chain = chain.lock().unwrap();
-if !chain.add_block(block) {
-    send(&mut stream, &Message::GetBlock { hash });
-}
-
-            }
-
+            // ======================================================
+            // BLOCK
+            // ======================================================
             Message::Block { block } => {
-                let mut chain = chain.lock().unwrap();
-                chain.add_block(block);
+                let mut chain_guard = chain.lock().unwrap();
+
+                if chain_guard.add_block(block.clone()) {
+                    // -------------------------------
+                    // PROMOTE ORPHAN TX (SAFE)
+                    // -------------------------------
+                    {
+                        let utxos_snapshot = chain_guard.utxos.clone();
+                        orphan_tx.lock().unwrap().try_promote(
+                            &utxos_snapshot,
+                            |tx| {
+                                mempool.lock().unwrap().add(tx, &utxos_snapshot);
+                            },
+                        );
+                    }
+
+                    // -------------------------------
+                    // PROMOTE ORPHAN BLOCKS (2-PHASE)
+                    // -------------------------------
+
+                    // Phase 1: collect promotable blocks (immutable access only)
+                    let promotable_blocks: Vec<_> = {
+                        let ob = orphan_block.lock().unwrap();
+                        ob.blocks
+                            .values()
+                            .filter(|o| {
+                                chain_guard
+                                    .blocks
+                                    .contains_key(&o.block.header.prev_hash)
+                            })
+                            .map(|o| o.block.clone())
+                            .collect()
+                    };
+
+                    // Phase 2: apply blocks (mutable access)
+                    for b in promotable_blocks {
+                        if chain_guard.add_block(b.clone()) {
+                            orphan_block
+                                .lock()
+                                .unwrap()
+                                .blocks
+                                .remove(&hash_header(&b.header));
+                        }
+                    }
+                } else {
+                    // orphan block
+                    orphan_block.lock().unwrap().add(block);
+                }
             }
 
             _ => {}
@@ -100,7 +99,4 @@ if !chain.add_block(block) {
     }
 }
 
-fn send(stream: &mut TcpStream, msg: &Message) {
-    let data = bincode::serialize(msg).unwrap();
-    let _ = stream.write_all(&data);
-}
+
