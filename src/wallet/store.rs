@@ -4,21 +4,19 @@ use secp256k1::{Secp256k1, PublicKey};
 use crate::wallet::seed::MasterSeed;
 use crate::wallet::derive::{derive_key, DerivedKey};
 use crate::wallet::address::pubkey_to_address;
-use crate::wallet::persist::{save_wallet, load_wallet};
+use crate::wallet::role::Role;
 
 pub struct Wallet {
     seed: Option<MasterSeed>, // None = locked
-    domain: String,
-    next_index: u64,
-    keys: HashMap<Vec<u8>, DerivedKey>,
+    next_index: HashMap<Role, u64>,
+    keys: HashMap<(Role, Vec<u8>), DerivedKey>, // (role, address) → key
 }
 
 impl Wallet {
-    pub fn new(domain: &str) -> Self {
+    pub fn new() -> Self {
         Self {
             seed: None,
-            domain: domain.to_string(),
-            next_index: 0,
+            next_index: HashMap::new(),
             keys: HashMap::new(),
         }
     }
@@ -32,21 +30,22 @@ impl Wallet {
         self.keys.clear();
     }
 
-    pub fn generate_address(&mut self) -> Vec<u8> {
+    pub fn generate_address(&mut self, role: Role) -> Vec<u8> {
         let seed = self.seed.as_ref().expect("wallet locked");
 
-        let dk = derive_key(seed, &self.domain, self.next_index);
-        self.next_index += 1;
+        let index = self.next_index.entry(role.clone()).or_insert(0);
+        let dk = derive_key(seed, &role, *index);
+        *index += 1;
 
         let secp = Secp256k1::new();
         let pk = PublicKey::from_secret_key(&secp, &dk.secret);
         let addr = pubkey_to_address(&pk);
 
-        self.keys.insert(addr.clone(), dk);
+        self.keys.insert((role, addr.clone()), dk);
         addr
     }
 
-    pub fn get_key(&self, address: &[u8]) -> Option<&DerivedKey> {
-        self.keys.get(address)
+    pub fn get_key(&self, role: &Role, address: &[u8]) -> Option<&DerivedKey> {
+        self.keys.get(&(role.clone(), address.to_vec()))
     }
 }
